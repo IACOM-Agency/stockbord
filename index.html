@@ -1,0 +1,589 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>StockBord - Gestion de stocks & Devis</title>
+  <meta name="description" content="Interface web AutoBord Stocks: gestion d'articles avec photos, recherche, devis et impression">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🗃️</text></svg>">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f6f8fb; color: #333; line-height: 1.6; }
+    .topbar { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 1rem 2rem; display: flex; align-items: center; box-shadow: 0 2px 10px rgba(0,0,0,0.1); position: sticky; top: 0; z-index: 1000; }
+    .topbar h1 { font-size: 1.5rem; font-weight: 600; }
+    .actions { margin-left: auto; display: flex; gap: 0.5rem; }
+    .actions button { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.3); color: white; padding: 0.5rem 1rem; border-radius: 6px; cursor: pointer; font-size: 0.9rem; transition: all 0.2s; }
+    .actions button:hover { background: rgba(255,255,255,0.3); transform: translateY(-1px); }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; padding: 2rem; max-width: 1400px; margin: 0 auto; }
+    @media (max-width: 1024px) { .grid { grid-template-columns: 1fr; } }
+    @media (max-width: 768px) {
+      .topbar { padding: 0.75rem 1rem; }
+      .topbar h1 { font-size: 1.2rem; }
+      .actions { gap: 0.25rem; flex-wrap: wrap; }
+      .actions button { padding: 0.4rem 0.6rem; font-size: 0.85rem; }
+    }
+    .card { background: white; border-radius: 12px; padding: 1.5rem; box-shadow: 0 4px 20px rgba(0,0,0,0.08); border: 1px solid #e1e8ed; overflow: auto; max-height: calc(100vh - 160px); }
+    .card h2 { color: #2c3e50; margin-bottom: 1rem; font-size: 1.3rem; font-weight: 600; }
+    .toolbar { display: flex; flex-direction: column; gap: 0.75rem; margin-bottom: 1rem; align-items: stretch; }
+    .toolbar input[type="text"] { width: 100%; padding: 0.6rem; border: 2px solid #e1e8ed; border-radius: 6px; font-size: 0.9rem; }
+    .btnrow { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+    .toolbar input[type="text"]:focus { outline: none; border-color: #667eea; }
+    .toolbar button { background: #667eea; color: white; border: none; padding: 0.6rem 1rem; border-radius: 6px; cursor: pointer; font-size: 0.9rem; transition: all 0.2s; }
+    .toolbar button:hover { background: #5a67d8; transform: translateY(-1px); }
+    .toolbar button.secondary { background: #718096; }
+    .toolbar button.secondary:hover { background: #4a5568; }
+    .thumb { width: 56px; height: 56px; object-fit: cover; border-radius: 6px; border: 1px solid #e1e8ed; }
+    .table { width: 100%; border-collapse: collapse; margin-top: 1rem; min-width: 900px; }
+    .table th, .table td { padding: 0.75rem; text-align: left; border-bottom: 1px solid #e1e8ed; vertical-align: middle; }
+    .table th { background: #f8fafc; font-weight: 600; color: #2d3748; font-size: 0.9rem; }
+    .table tbody tr:hover { background: #f8fafc; }
+    .table input { width: 100%; padding: 0.4rem; border: 1px solid #e1e8ed; border-radius: 4px; font-size: 0.9rem; }
+    .gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(90px, 1fr)); gap: 0.5rem; }
+    .gallery .imgbox { border: 1px solid #e1e8ed; border-radius: 8px; padding: 0.4rem; text-align: center; cursor: pointer; }
+    .gallery .imgbox.selected { border-color: #667eea; box-shadow: 0 0 0 2px rgba(102,126,234,0.3); }
+    .footer { background: #2d3748; color: white; text-align: center; padding: 1rem; font-size: 0.9rem; }
+    .success { background: #48bb78; color: white; padding: 0.5rem 1rem; border-radius: 4px; margin: 0.5rem 0; }
+    .error { background: #e53e3e; color: white; padding: 0.5rem 1rem; border-radius: 4px; margin: 0.5rem 0; }
+    /* Lightbox */
+    .lightbox { position: fixed; inset: 0; background: rgba(0,0,0,0.8); display: none; align-items: center; justify-content: center; z-index: 2000; }
+    .lightbox img { max-width: 92vw; max-height: 92vh; border-radius: 8px; box-shadow: 0 10px 40px rgba(0,0,0,0.6); }
+    .lightbox .close { position: absolute; top: 16px; right: 16px; background: #e53e3e; color: #fff; border: none; border-radius: 6px; padding: 0.4rem 0.6rem; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <h1>🗃️ StockBord</h1>
+    <div class="actions">
+      <button id="printQuote">🖨️ Imprimer</button>
+    </div>
+  </header>
+
+  <main class="grid">
+    <!-- Catalogue + Photos -->
+    <section class="card">
+      <h2>📦 Catalogue d'articles</h2>
+      <div class="toolbar">
+        <input type="text" id="search" placeholder="🔍 Rechercher (code, nom)" />
+        <div class="btnrow">
+          <button id="importCsvBtn">⬆️ Import CSV</button>
+          <button id="importJsonBtn">⬆️ Import JSON</button>
+          <button id="exportJsonBtn">⬇️ Export JSON</button>
+          <button id="exportCsvBtn">⬇️ Export CSV</button>
+        </div>
+        <div style="display:none">
+          <input type="file" id="csvFile" accept=".csv,text/csv,application/vnd.ms-excel" />
+          <input type="file" id="jsonFile" accept=".json" />
+          <input type="file" id="photoUpload" accept="image/*" multiple />
+        </div>
+      </div>
+      <div id="catalogMessage"></div>
+
+      <h3>🖼️ Bibliothèque photos</h3>
+      <div class="btnrow" style="margin-bottom:0.5rem">
+        <button id="addPhotosBtn">Ajouter des photos</button>
+        <button id="clearPhotosBtn" class="secondary">Vider bibliothèque</button>
+      </div>
+      <div id="photoLibrary" class="gallery"></div>
+
+      <h3 style="margin-top:1rem">➕ Nouvel article</h3>
+      <div class="btnrow" style="flex-wrap:wrap; gap:0.75rem">
+        <input type="text" id="itemCode" placeholder="Code" style="max-width:160px" />
+        <input type="text" id="itemName" placeholder="Désignation" style="flex:1" />
+        <input type="number" id="itemPrice" placeholder="Prix HT" step="0.01" style="max-width:160px" />
+        <button id="addItemBtn">Ajouter</button>
+      </div>
+      <div class="success" id="addItemInfo" style="display:none"></div>
+
+      <table class="table" id="itemsTable">
+        <thead>
+          <tr>
+            <th>Photo</th><th>Code</th><th>Désignation</th><th>Prix HT</th><th>Actions</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
+    <!-- Bordereau / Devis -->
+    <section class="card">
+      <h2>📋 Bordereau / Devis</h2>
+      <table class="table" id="quoteTable">
+        <thead>
+          <tr>
+            <th>Photo</th><th>Code</th><th>Désignation</th><th>Qté</th><th>PU HT</th><th>Remise%</th><th>TVA%</th><th>Total HT</th><th>Total TTC</th><th>Actions</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+      <div class="btnrow">
+        <input type="text" id="endpoint" placeholder="URL serveur (POST JSON)" style="flex:1" />
+        <button id="sendToServerBtn" class="secondary">Envoyer au serveur</button>
+      </div>
+    </section>
+
+    <!-- Cloud config (Supabase) -->
+    <section class="card">
+      <h2>☁️ Cloud (Supabase)</h2>
+      <div class="toolbar">
+        <input type="text" id="sbUrl" placeholder="Supabase URL (ex: https://xxxx.supabase.co)" />
+        <input type="text" id="sbKey" placeholder="Supabase anon public key" />
+        <input type="text" id="sbBucket" placeholder="Nom du bucket (ex: stockbord)" />
+        <div class="btnrow">
+          <button id="saveCloudConfigBtn">Sauvegarder config cloud</button>
+          <button id="migrateToCloudBtn" class="secondary">Migrer photos locales vers cloud</button>
+        </div>
+      </div>
+      <div id="cloudMessage"></div>
+      <p style="font-size:0.9rem;color:#4a5568;margin-top:0.5rem">Le bucket doit être <strong>Public</strong> et autoriser les INSERT pour les utilisateurs anon. Les photos seront listées sous le préfixe <code>photos/</code>.</p>
+    </section>
+  </main>
+
+  <footer class="footer">💻 StockBord • Gestion d'articles avec photos • Export/Import • Impression</footer>
+
+  <!-- Lightbox overlay for image preview -->
+  <div id="lightbox" class="lightbox">
+    <img id="lightboxImg" alt="Prévisualisation" />
+    <button id="lightboxClose" class="close">✖</button>
+  </div>
+  <script>
+    // Minimal IndexedDB helper (no external CDN)
+    window.simpleIDB = (() => {
+      const dbName = 'stockbord-db';
+      const storeName = 'photos';
+      let dbPromise;
+      function open() {
+        if (!dbPromise) {
+          dbPromise = new Promise((resolve, reject) => {
+            if (!('indexedDB' in window)) { reject(new Error('IndexedDB non disponible')); return; }
+            const req = indexedDB.open(dbName, 1);
+            req.onupgradeneeded = () => { try { req.result.createObjectStore(storeName); } catch(e){} };
+            req.onsuccess = () => resolve(req.result);
+            req.onerror = () => reject(req.error);
+          });
+        }
+        return dbPromise;
+      }
+      async function get(key) {
+        const db = await open();
+        return new Promise((resolve, reject) => {
+          const tx = db.transaction(storeName, 'readonly');
+          const st = tx.objectStore(storeName);
+          const rq = st.get(key);
+          rq.onsuccess = () => resolve(rq.result);
+          rq.onerror = () => reject(rq.error);
+        });
+      }
+      async function set(key, val) {
+        const db = await open();
+        return new Promise((resolve, reject) => {
+          const tx = db.transaction(storeName, 'readwrite');
+          const st = tx.objectStore(storeName);
+          const rq = st.put(val, key);
+          rq.onsuccess = () => resolve();
+          rq.onerror = () => reject(rq.error);
+        });
+      }
+      async function clear() {
+        const db = await open();
+        return new Promise((resolve, reject) => {
+          const tx = db.transaction(storeName, 'readwrite');
+          const st = tx.objectStore(storeName);
+          const rq = st.clear();
+          rq.onsuccess = () => resolve();
+          rq.onerror = () => reject(rq.error);
+        });
+      }
+      return { get, set, clear };
+    })();
+    class AutoBordStocks {
+      constructor() {
+        this.items = [];
+        this.photos = []; // {name, dataUrl}
+        this.quote = [];
+        this.importingCsv = false;
+        this.importingJson = false;
+        this.hasIDB = ('indexedDB' in window);
+        this.sb = { url: '', key: '', bucket: '' };
+        this.init();
+        this.loadLibrary();
+        this.loadItems();
+        this.loadQuote();
+        this.loadCloudConfig();
+      }
+
+      init() {
+        document.getElementById('search').addEventListener('input', (e) => this.renderItems(e.target.value));
+        document.getElementById('importCsvBtn').addEventListener('click', () => document.getElementById('csvFile').click());
+        document.getElementById('importJsonBtn').addEventListener('click', () => document.getElementById('jsonFile').click());
+        document.getElementById('exportJsonBtn').addEventListener('click', () => this.exportJson());
+        document.getElementById('exportCsvBtn').addEventListener('click', () => this.exportCsv());
+        document.getElementById('csvFile').addEventListener('change', (e) => this.importCsv(e));
+        document.getElementById('jsonFile').addEventListener('change', (e) => this.importJson(e));
+        document.getElementById('addPhotosBtn').addEventListener('click', () => document.getElementById('photoUpload').click());
+        document.getElementById('photoUpload').addEventListener('change', (e) => this.addPhotos(e));
+        document.getElementById('clearPhotosBtn').addEventListener('click', () => this.clearPhotos());
+        document.getElementById('addItemBtn').addEventListener('click', () => this.addItem());
+        document.getElementById('printQuote').addEventListener('click', () => this.printQuote());
+        document.getElementById('sendToServerBtn').addEventListener('click', () => this.sendToServer());
+        document.getElementById('saveCloudConfigBtn').addEventListener('click', () => this.saveCloudConfig());
+        document.getElementById('migrateToCloudBtn').addEventListener('click', () => this.migratePhotosToCloud());
+        // Lightbox events
+        const lb = document.getElementById('lightbox');
+        const closeBtn = document.getElementById('lightboxClose');
+        closeBtn.addEventListener('click', () => this.closeImage());
+        lb.addEventListener('click', (e) => { if (e.target.id === 'lightbox') this.closeImage(); });
+      }
+
+      showMessage(id, message, type='success') {
+        const el = document.getElementById(id);
+        el.textContent = message;
+        el.className = type;
+        el.style.display = 'block';
+        setTimeout(() => { el.style.display = 'none'; }, 2500);
+      }
+
+      // Photos library
+      addPhotos(event) {
+        const files = Array.from(event.target.files || []);
+        if (this.remoteEnabled()) {
+          this.uploadPhotosRemote(files).then(() => {
+            this.renderLibrary();
+            event.target.value = '';
+            this.showMessage('catalogMessage', `${files.length} photos envoyées vers le cloud`, 'success');
+          }).catch(() => this.showMessage('catalogMessage', 'Échec upload cloud', 'error'));
+          return;
+        }
+        const readers = files.map(file => new Promise((resolve) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve({ name: file.name, dataUrl: reader.result });
+          reader.readAsDataURL(file);
+        }));
+        Promise.all(readers).then(photos => {
+          this.photos = [...this.photos, ...photos];
+          this.saveLibrary();
+          this.renderLibrary();
+          event.target.value = '';
+        });
+      }
+      renderLibrary() {
+        const lib = document.getElementById('photoLibrary');
+        lib.innerHTML = '';
+        this.photos.forEach((p, idx) => {
+          const box = document.createElement('div');
+          box.className = 'imgbox';
+          const src = p.url || p.dataUrl;
+          box.innerHTML = `<img class="thumb" src="${src}" alt="${p.name}"/><div style="font-size:0.75rem; margin-top:0.25rem">${p.name}</div>`;
+          box.addEventListener('click', () => box.classList.toggle('selected'));
+          lib.appendChild(box);
+        });
+      }
+      async clearPhotos() {
+        this.photos = [];
+        try { if (this.hasIDB) { await simpleIDB.clear(); } } catch(e){}
+        try { localStorage.removeItem('abs_photos'); } catch(e){}
+        this.renderLibrary();
+      }
+      async saveLibrary() {
+        // Primary: IndexedDB via idb-keyval; Fallback: localStorage
+        try { if (this.hasIDB) { await simpleIDB.set('photos', this.photos); return; } } catch(e){}
+        try { localStorage.setItem('abs_photos', JSON.stringify(this.photos)); } catch(e){}
+      }
+      async loadLibrary() {
+        if (this.remoteEnabled()) {
+          try { await this.listPhotosRemote(); this.renderLibrary(); return; } catch(e){}
+        }
+        // Try IndexedDB first
+        if (this.hasIDB) {
+          try {
+            const arr = await simpleIDB.get('photos');
+            if (arr && Array.isArray(arr)) { this.photos = arr; this.renderLibrary(); return; }
+          } catch(e){}
+        }
+        // Fallback to existing localStorage, migrate to IDB if present
+        try {
+          const s = localStorage.getItem('abs_photos');
+          this.photos = s ? JSON.parse(s) : [];
+          if (this.photos.length && this.hasIDB) {
+            try { await simpleIDB.set('photos', this.photos); localStorage.removeItem('abs_photos'); } catch(e){}
+          }
+        } catch(e){}
+        this.renderLibrary();
+      }
+
+      // Cloud config & helpers
+      remoteEnabled() { return !!(this.sb.url && this.sb.key && this.sb.bucket); }
+      loadCloudConfig() {
+        try {
+          this.sb.url = localStorage.getItem('sb_url') || '';
+          this.sb.key = localStorage.getItem('sb_key') || '';
+          this.sb.bucket = localStorage.getItem('sb_bucket') || '';
+          const u = document.getElementById('sbUrl'); const k = document.getElementById('sbKey'); const b = document.getElementById('sbBucket');
+          if (u) u.value = this.sb.url; if (k) k.value = this.sb.key; if (b) b.value = this.sb.bucket;
+          this.updateCloudStatus();
+        } catch(e){}
+      }
+      saveCloudConfig() {
+        this.sb.url = document.getElementById('sbUrl').value.trim();
+        this.sb.key = document.getElementById('sbKey').value.trim();
+        this.sb.bucket = document.getElementById('sbBucket').value.trim();
+        try { localStorage.setItem('sb_url', this.sb.url); localStorage.setItem('sb_key', this.sb.key); localStorage.setItem('sb_bucket', this.sb.bucket); } catch(e){}
+        this.updateCloudStatus();
+        this.showMessage('cloudMessage', this.remoteEnabled()? 'Cloud configuré' : 'Cloud non configuré', this.remoteEnabled()? 'success':'error');
+      }
+      updateCloudStatus() {
+        const msg = document.getElementById('cloudMessage');
+        if (!msg) return;
+        if (this.remoteEnabled()) { msg.textContent = 'Cloud activé'; msg.className = 'success'; msg.style.display = 'block'; }
+        else { msg.textContent = 'Cloud inactif'; msg.className = 'error'; msg.style.display = 'block'; }
+        setTimeout(() => { msg.style.display = 'none'; }, 2500);
+      }
+      makePublicUrl(path) { return `${this.sb.url}/storage/v1/object/public/${this.sb.bucket}/${path}`; }
+      async uploadPhotosRemote(files) {
+        for (const file of files) {
+          const safeName = file.name.replace(/\s+/g, '_');
+          const path = `photos/${Date.now()}_${safeName}`;
+          const url = `${this.sb.url}/storage/v1/object/${this.sb.bucket}/${path}`;
+          const res = await fetch(url, { method: 'POST', headers: { 'Authorization': `Bearer ${this.sb.key}`, 'apikey': this.sb.key, 'Content-Type': file.type||'application/octet-stream' }, body: file });
+          if (!res.ok) throw new Error('Upload failed');
+          const publicUrl = this.makePublicUrl(path);
+          this.photos.push({ name: file.name, url: publicUrl });
+        }
+        this.saveLibrary();
+      }
+      async listPhotosRemote() {
+        const listUrl = `${this.sb.url}/storage/v1/object/list/${this.sb.bucket}`;
+        const body = { prefix: 'photos/', limit: 1000, sortBy: { column: 'name', order: 'asc' } };
+        const res = await fetch(listUrl, { method: 'POST', headers: { 'Authorization': `Bearer ${this.sb.key}`, 'apikey': this.sb.key, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        if (!res.ok) throw new Error('List failed');
+        const arr = await res.json();
+        this.photos = Array.isArray(arr)? arr.filter(o => !o.name.endsWith('/')).map(o => ({ name: o.name.split('/').pop(), url: this.makePublicUrl(o.name) })) : [];
+      }
+      dataURLToBlob(dataUrl) {
+        const [head, base64] = dataUrl.split(',');
+        const mime = (head.match(/data:(.*);base64/)||[])[1] || 'application/octet-stream';
+        const bin = atob(base64 || '');
+        const len = bin.length; const buf = new Uint8Array(len);
+        for (let i=0;i<len;i++) buf[i] = bin.charCodeAt(i);
+        return new Blob([buf], { type: mime });
+      }
+      async migratePhotosToCloud() {
+        if (!this.remoteEnabled()) { this.showMessage('cloudMessage', 'Configurez le cloud avant la migration', 'error'); return; }
+        const localPhotos = this.photos.filter(p => p.dataUrl);
+        for (const p of localPhotos) {
+          const blob = this.dataURLToBlob(p.dataUrl);
+          const file = new File([blob], p.name || `photo_${Date.now()}.jpg`, { type: blob.type });
+          await this.uploadPhotosRemote([file]);
+        }
+        // Recharger depuis le cloud pour uniformiser
+        await this.listPhotosRemote();
+        this.renderLibrary();
+        this.showMessage('cloudMessage', `Migration terminée (${localPhotos.length} photos)`, 'success');
+      }
+
+      // Items
+      addItem() {
+        const code = document.getElementById('itemCode').value.trim();
+        const name = document.getElementById('itemName').value.trim();
+        const price = parseFloat(document.getElementById('itemPrice').value) || 0;
+        const selectedPhotos = Array.from(document.querySelectorAll('#photoLibrary .imgbox.selected')).map((el, i) => {
+          const img = el.querySelector('img');
+          return img ? img.src : null;
+        }).filter(Boolean);
+        if (!code || !name) { this.showMessage('catalogMessage', 'Code et désignation sont requis', 'error'); return; }
+        const item = { code, name, priceHT: price, photos: selectedPhotos };
+        this.items.push(item);
+        this.renderItems();
+        this.saveItems();
+        document.getElementById('itemCode').value = '';
+        document.getElementById('itemName').value = '';
+        document.getElementById('itemPrice').value = '';
+        document.querySelectorAll('#photoLibrary .imgbox.selected').forEach(el => el.classList.remove('selected'));
+        this.showMessage('addItemInfo', `Article "${name}" ajouté`, 'success');
+      }
+
+      renderItems(query='') {
+        const tbody = document.querySelector('#itemsTable tbody');
+        tbody.innerHTML = '';
+        const q = query.toLowerCase();
+        const filtered = this.items.filter(i => i.code.toLowerCase().includes(q) || i.name.toLowerCase().includes(q));
+        filtered.forEach((item, idx) => {
+          const tr = document.createElement('tr');
+          const photo = item.photos && item.photos[0] ? `<img class="thumb" src="${item.photos[0]}" onclick="app.openImage('${item.photos[0]}')"/>` : '—';
+          tr.innerHTML = `
+            <td>${photo}</td>
+            <td>${item.code}</td>
+            <td>${item.name}</td>
+            <td>${item.priceHT.toFixed(2)} €</td>
+            <td>
+              <button onclick="app.addToQuote(${idx})">➕</button>
+              <button onclick="app.deleteItem(${idx})" style="background:#e53e3e">🗑️</button>
+            </td>
+          `;
+          tbody.appendChild(tr);
+        });
+      }
+      deleteItem(index) { this.items.splice(index, 1); this.renderItems(document.getElementById('search').value); this.saveItems(); }
+
+      // Quote
+      addToQuote(index) {
+        const it = this.items[index];
+        const qi = { ...it, quantity: 1, discount: 0, tva: 20 };
+        this.quote.push(qi);
+        this.renderQuote();
+        this.saveQuote();
+      }
+      renderQuote() {
+        const tbody = document.querySelector('#quoteTable tbody');
+        tbody.innerHTML = '';
+        this.quote.forEach((item, idx) => {
+          const photo = item.photos && item.photos[0] ? `<img class=\"thumb\" src=\"${item.photos[0]}\" onclick=\"app.openImage('${item.photos[0]}')\"/>` : '—';
+          const totalHT = item.priceHT * item.quantity * (1 - item.discount/100);
+          const totalTTC = totalHT * (1 + item.tva/100);
+          const tr = document.createElement('tr');
+          tr.innerHTML = `
+            <td>${photo}</td>
+            <td>${item.code}</td>
+            <td>${item.name}</td>
+            <td><input type="number" min="0" step="0.01" value="${item.quantity}" onchange="app.updateQuote(${idx}, 'quantity', parseFloat(this.value))"></td>
+            <td><input type="number" step="0.01" value="${item.priceHT}" onchange="app.updateQuote(${idx}, 'priceHT', parseFloat(this.value))"></td>
+            <td><input type="number" step="0.01" value="${item.discount}" onchange="app.updateQuote(${idx}, 'discount', parseFloat(this.value))"></td>
+            <td>${item.tva}%</td>
+            <td>${totalHT.toFixed(2)} €</td>
+            <td>${totalTTC.toFixed(2)} €</td>
+            <td><button onclick="app.removeQuote(${idx})">🗑️</button></td>
+          `;
+          tbody.appendChild(tr);
+        });
+      }
+      updateQuote(idx, field, value) { this.quote[idx][field] = value; this.renderQuote(); this.saveQuote(); }
+      removeQuote(idx) { this.quote.splice(idx, 1); this.renderQuote(); this.saveQuote(); }
+
+      // Lightbox controls
+      openImage(src) {
+        const lb = document.getElementById('lightbox');
+        const img = document.getElementById('lightboxImg');
+        img.src = src; lb.style.display = 'flex';
+      }
+      closeImage() {
+        const lb = document.getElementById('lightbox');
+        const img = document.getElementById('lightboxImg');
+        img.src = ''; lb.style.display = 'none';
+      }
+
+      printQuote() {
+        let html = `
+        <html><head><title>Devis StockBord</title><style>
+          body{font-family:Arial,sans-serif;margin:20px}
+          table{width:100%;border-collapse:collapse;margin-top:10px}
+          th,td{border:1px solid #ddd;padding:8px;text-align:left}
+          th{background:#f2f2f2}
+          img{width:48px;height:48px;object-fit:cover;border-radius:6px}
+        </style></head><body>
+          <h2>Devis / Bordereau</h2>
+          <table><thead><tr>
+            <th>Photo</th><th>Code</th><th>Désignation</th><th>Qté</th><th>PU HT</th><th>Remise%</th><th>Total HT</th><th>Total TTC</th>
+          </tr></thead><tbody>`;
+        let totalHT=0, totalTTC=0;
+        this.quote.forEach(item=>{
+          const lineHT = item.priceHT * item.quantity * (1 - item.discount/100);
+          const lineTTC = lineHT * (1 + item.tva/100);
+          totalHT += lineHT; totalTTC += lineTTC;
+          const photo = item.photos && item.photos[0] ? `<img src='${item.photos[0]}'/>` : '—';
+          html += `<tr>
+            <td>${photo}</td>
+            <td>${item.code}</td>
+            <td>${item.name}</td>
+            <td>${item.quantity}</td>
+            <td>${item.priceHT.toFixed(2)} €</td>
+            <td>${item.discount}%</td>
+            <td>${lineHT.toFixed(2)} €</td>
+            <td>${lineTTC.toFixed(2)} €</td>
+          </tr>`;
+        });
+        html += `</tbody></table>
+          <p><strong>Total HT:</strong> ${totalHT.toFixed(2)} €</p>
+          <p><strong>Total TVA:</strong> ${(totalTTC-totalHT).toFixed(2)} €</p>
+          <p><strong>Total TTC:</strong> ${totalTTC.toFixed(2)} €</p>
+        </body></html>`;
+        const w = window.open('', '_blank');
+        w.document.write(html); w.document.close(); w.focus(); w.onload = () => { try { w.print(); } catch(e){} };
+      }
+
+      // Import/Export
+      exportJson() {
+        const blob = new Blob([JSON.stringify(this.items, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob); const a = document.createElement('a');
+        a.href = url; a.download = 'catalogue_stocks.json'; a.click(); URL.revokeObjectURL(url);
+        this.showMessage('catalogMessage', 'Catalogue exporté (JSON)', 'success');
+      }
+      exportCsv() {
+        // photos: concat with | for first N photos
+        const rows = [['code','name','priceHT','photos']].concat(this.items.map(i => [i.code, i.name, i.priceHT, (i.photos||[]).join('|')]));
+        const csv = rows.map(r => r.map(v => (typeof v==='string' && v.includes(',')) ? `"${v.replace(/"/g,'""')}"` : v).join(',')).join('\n');
+        const blob = new Blob([csv], { type: 'text/csv' }); const url = URL.createObjectURL(blob); const a = document.createElement('a');
+        a.href = url; a.download = 'catalogue_stocks.csv'; a.click(); URL.revokeObjectURL(url);
+        this.showMessage('catalogMessage', 'Catalogue exporté (CSV)', 'success');
+      }
+      importCsv(event) {
+        if (this.importingCsv) return; this.importingCsv = true;
+        const file = event.target.files[0]; if (!file) return;
+        const reader = new FileReader(); reader.onload = (e) => {
+          try {
+            const lines = e.target.result.split(/\r?\n/).filter(l=>l.trim().length);
+            if (!lines.length) throw new Error('CSV vide');
+            const headers = lines[0].split(',').map(h=>h.trim().toLowerCase());
+            const idxCode = headers.indexOf('code');
+            const idxName = headers.indexOf('name');
+            const idxPrice = headers.indexOf('priceht');
+            const idxPhotos = headers.indexOf('photos');
+            const items = [];
+            for (let i=1;i<lines.length;i++){
+              const vals = lines[i].split(',').map(v=>v.trim());
+              const photos = idxPhotos>=0 ? (vals[idxPhotos]||'').split('|').filter(Boolean) : [];
+              items.push({
+                code: idxCode>=0 ? vals[idxCode] : `CODE${Date.now()}`,
+                name: idxName>=0 ? vals[idxName] : 'Article',
+                priceHT: parseFloat(idxPrice>=0 ? vals[idxPrice] : '0') || 0,
+                photos
+              });
+            }
+            this.items = items; this.renderItems(); this.saveItems();
+            this.showMessage('catalogMessage', `${items.length} articles importés`, 'success');
+          } catch(err){ this.showMessage('catalogMessage', 'Erreur import CSV', 'error'); }
+          this.importingCsv = false; event.target.value = '';
+        }; reader.readAsText(file);
+      }
+      importJson(event) {
+        if (this.importingJson) return; this.importingJson = true;
+        const file = event.target.files[0]; if (!file) return;
+        const reader = new FileReader(); reader.onload = (e) => {
+          try {
+            const data = JSON.parse(e.target.result);
+            if (Array.isArray(data)) { this.items = data.map(o => ({ code: o.code||`CODE${Date.now()}`, name: o.name||o.designation||'Article', priceHT: parseFloat(o.priceHT||o.prix||0)||0, photos: Array.isArray(o.photos)?o.photos:[] })); this.renderItems(); this.saveItems(); this.showMessage('catalogMessage', `${this.items.length} articles importés`, 'success'); }
+          } catch(err){ this.showMessage('catalogMessage', 'Erreur import JSON', 'error'); }
+          this.importingJson = false; event.target.value = '';
+        }; reader.readAsText(file);
+      }
+
+      // Server send (POST JSON)
+      async sendToServer() {
+        const url = document.getElementById('endpoint').value.trim();
+        if (!url) { this.showMessage('catalogMessage', 'Renseignez l\'URL serveur', 'error'); return; }
+        try {
+          const res = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ items: this.items, quote: this.quote }) });
+          if (!res.ok) throw new Error('HTTP '+res.status);
+          this.showMessage('catalogMessage', 'Catalogue envoyé au serveur', 'success');
+        } catch(err) { this.showMessage('catalogMessage', 'Échec envoi serveur', 'error'); }
+      }
+
+      // Persistence: items & quote
+      saveItems() { try { localStorage.setItem('abs_items', JSON.stringify(this.items)); } catch(e){} }
+      loadItems() { try { const s = localStorage.getItem('abs_items'); this.items = s ? JSON.parse(s) : []; this.renderItems(); } catch(e){} }
+      saveQuote() { try { localStorage.setItem('abs_quote', JSON.stringify(this.quote)); } catch(e){} }
+      loadQuote() { try { const s = localStorage.getItem('abs_quote'); this.quote = s ? JSON.parse(s) : []; this.renderQuote(); } catch(e){} }
+    }
+
+    const app = new AutoBordStocks();
+  </script>
+</body>
+</html>
