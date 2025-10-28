@@ -14,6 +14,9 @@
     .actions { margin-left: auto; display: flex; gap: 0.5rem; }
     .actions button { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.3); color: white; padding: 0.5rem 1rem; border-radius: 6px; cursor: pointer; font-size: 0.9rem; transition: all 0.2s; }
     .actions button:hover { background: rgba(255,255,255,0.3); transform: translateY(-1px); }
+    .badge { background: #edf2f7; color: #2d3748; border: 1px solid #e2e8f0; padding: 0.25rem 0.5rem; border-radius: 9999px; font-size: 0.8rem; margin-left: 1rem; }
+    .badge.success { background: #c6f6d5; color: #22543d; border-color: #9ae6b4; }
+    .badge.error { background: #fed7d7; color: #7f1d1d; border-color: #feb2b2; }
     .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; padding: 2rem; max-width: 1400px; margin: 0 auto; }
     @media (max-width: 1024px) { .grid { grid-template-columns: 1fr; } }
     @media (max-width: 768px) {
@@ -53,6 +56,7 @@
 <body>
   <header class="topbar">
     <h1>🗃️ StockBord</h1>
+    <span id="cloudBadge" class="badge">Cloud: OFF</span>
     <div class="actions">
       <button id="printQuote">🖨️ Imprimer</button>
     </div>
@@ -122,7 +126,7 @@
     </section>
 
     <!-- Cloud config (Supabase) -->
-    <section class="card">
+    <section class="card" id="cloudSection">
       <h2>☁️ Cloud (Supabase)</h2>
       <div class="toolbar">
         <input type="text" id="sbUrl" placeholder="Supabase URL (ex: https://xxxx.supabase.co)" />
@@ -130,6 +134,7 @@
         <input type="text" id="sbBucket" placeholder="Nom du bucket (ex: stockbord)" />
         <div class="btnrow">
           <button id="saveCloudConfigBtn">Sauvegarder config cloud</button>
+          <button id="testCloudBtn">Tester connexion cloud</button>
           <button id="migrateToCloudBtn" class="secondary">Migrer photos locales vers cloud</button>
         </div>
       </div>
@@ -145,6 +150,7 @@
     <img id="lightboxImg" alt="Prévisualisation" />
     <button id="lightboxClose" class="close">✖</button>
   </div>
+  <script src="supabase.auto.js"></script>
   <script>
     // Minimal IndexedDB helper (no external CDN)
     window.simpleIDB = (() => {
@@ -250,7 +256,11 @@
             this.renderLibrary();
             event.target.value = '';
             this.showMessage('catalogMessage', `${files.length} photos envoyées vers le cloud`, 'success');
-          }).catch(() => this.showMessage('catalogMessage', 'Échec upload cloud', 'error'));
+          }).catch((err) => {
+            console.error('Upload cloud error:', err);
+            const msg = (err && err.message) ? err.message : 'Échec upload cloud';
+            this.showMessage('catalogMessage', msg, 'error');
+          });
           return;
         }
         const readers = files.map(file => new Promise((resolve) => {
@@ -340,11 +350,29 @@
       makePublicUrl(path) { return `${this.sb.url}/storage/v1/object/public/${this.sb.bucket}/${path}`; }
       async uploadPhotosRemote(files) {
         for (const file of files) {
+          // Limite Free: ~50MB par fichier
+          const maxSize = 50 * 1024 * 1024;
+          if (file.size && file.size > maxSize) {
+            throw new Error(`Fichier trop volumineux (>50MB): ${file.name}`);
+          }
           const safeName = file.name.replace(/\s+/g, '_');
           const path = `photos/${Date.now()}_${safeName}`;
           const url = `${this.sb.url}/storage/v1/object/${this.sb.bucket}/${path}`;
-          const res = await fetch(url, { method: 'POST', headers: { 'Authorization': `Bearer ${this.sb.key}`, 'apikey': this.sb.key, 'Content-Type': file.type||'application/octet-stream' }, body: file });
-          if (!res.ok) throw new Error('Upload failed');
+          const res = await fetch(url, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${this.sb.key}`,
+              'apikey': this.sb.key,
+              'Content-Type': file.type||'application/octet-stream',
+              'x-upsert': 'true'
+            },
+            body: file
+          });
+          if (!res.ok) {
+            let detail = '';
+            try { detail = await res.text(); } catch(_){}
+            throw new Error(`Upload échoué (HTTP ${res.status}) ${detail? '- '+detail:''}`);
+          }
           const publicUrl = this.makePublicUrl(path);
           this.photos.push({ name: file.name, url: publicUrl });
         }
@@ -436,7 +464,7 @@
         const tbody = document.querySelector('#quoteTable tbody');
         tbody.innerHTML = '';
         this.quote.forEach((item, idx) => {
-          const photo = item.photos && item.photos[0] ? `<img class=\"thumb\" src=\"${item.photos[0]}\" onclick=\"app.openImage('${item.photos[0]}')\"/>` : '—';
+          const photo = '—'; // Photos masquées dans les devis
           const totalHT = item.priceHT * item.quantity * (1 - item.discount/100);
           const totalTTC = totalHT * (1 + item.tva/100);
           const tr = document.createElement('tr');
@@ -488,7 +516,7 @@
           const lineHT = item.priceHT * item.quantity * (1 - item.discount/100);
           const lineTTC = lineHT * (1 + item.tva/100);
           totalHT += lineHT; totalTTC += lineTTC;
-          const photo = item.photos && item.photos[0] ? `<img src='${item.photos[0]}'/>` : '—';
+          const photo = '—'; // Photos masquées dans l'impression
           html += `<tr>
             <td>${photo}</td>
             <td>${item.code}</td>
@@ -584,6 +612,84 @@
     }
 
     const app = new AutoBordStocks();
+
+    // Auto-config Supabase: appliquer config, masquer UI optionnellement, badge d’état
+    (function(){
+      const projectRef = 'yodcgllzpdhzjatyuahf';
+      const urlInput = document.getElementById('sbUrl');
+      const keyInput = document.getElementById('sbKey');
+      const bucketInput = document.getElementById('sbBucket');
+      const cloudMsg = document.getElementById('cloudMessage');
+      const badgeEl = document.getElementById('cloudBadge');
+
+      // Pré-remplir par défaut
+      if (urlInput && !urlInput.value) urlInput.value = `https://${projectRef}.supabase.co`;
+      if (bucketInput && !bucketInput.value) bucketInput.value = 'photos';
+
+      const cfg = window.SUPABASE_CONFIG || {};
+      const url = cfg.url || (urlInput?.value || '').trim();
+      const key = cfg.key || (keyInput?.value || '').trim();
+      const bucket = (cfg.bucket || (bucketInput?.value || '').trim() || 'photos');
+      const hideUI = !!cfg.hideUI;
+      const autoMigrate = !!cfg.autoMigrate;
+
+      const setBadge = (ok, extra) => {
+        if (!badgeEl) return;
+        if (ok) {
+          badgeEl.textContent = `Cloud: ON${extra ? ` (${extra})` : ''}`;
+          badgeEl.classList.remove('error');
+          badgeEl.classList.add('success');
+        } else {
+          badgeEl.textContent = 'Cloud: OFF';
+          badgeEl.classList.remove('success');
+          badgeEl.classList.add('error');
+        }
+      };
+
+      const tryConnect = async () => {
+        if (url && key) {
+          app.sb = { url, key, bucket };
+          urlInput && (urlInput.value = url);
+          keyInput && (keyInput.value = key);
+          bucketInput && (bucketInput.value = bucket);
+          await app.updateCloudStatus();
+          try {
+            // Test de connexion: lister via REST Storage
+            const listUrl = `${url}/storage/v1/object/list/${bucket}`;
+            const body = { prefix: 'photos/', limit: 5, sortBy: { column: 'name', order: 'asc' } };
+            const res = await fetch(listUrl, { method: 'POST', headers: { 'Authorization': `Bearer ${key}`, 'apikey': key, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const arr = await res.json();
+            const count = Array.isArray(arr) ? arr.filter(o => !o.name.endsWith('/')).length : 0;
+            cloudMsg.textContent = `Connexion cloud active. Éléments visibles: ${count}`;
+            cloudMsg.className = 'success';
+            setBadge(true, `${count}`);
+            if (autoMigrate) { try { await app.migratePhotosToCloud(); } catch{} }
+          } catch(e) {
+            cloudMsg.textContent = `Test cloud échoué: ${e.message || e}`;
+            cloudMsg.className = 'error';
+            setBadge(false);
+          }
+        } else {
+          cloudMsg.textContent = 'Cloud inactif: clé requise pour activer.';
+          cloudMsg.className = '';
+          setBadge(false);
+        }
+      };
+
+      // Masquer l’UI cloud si demandé
+      if (hideUI) {
+        const section = document.getElementById('cloudSection');
+        if (section) section.style.display = 'none';
+      }
+
+      // Bouton test
+      const testBtn = document.getElementById('testCloudBtn');
+      if (testBtn) testBtn.addEventListener('click', tryConnect);
+
+      // Tentative automatique
+      tryConnect();
+    })();
   </script>
 </body>
 </html>
